@@ -9,6 +9,8 @@ from frappe.core.doctype.access_log.access_log import make_access_log
 from frappe.core.doctype.dynamic_link.dynamic_link import deduplicate_dynamic_links
 from frappe.model.document import Document
 from frappe.model.naming import append_number_if_name_exists
+from frappe.query_builder import Case
+from frappe.query_builder.functions import Locate
 from frappe.utils import cstr, has_gravatar
 
 
@@ -355,31 +357,37 @@ def contact_query(
 	link_doctype = filters.pop("link_doctype")
 	link_name = filters.pop("link_name")
 
-	return frappe.db.sql(
-		f"""select
-			`tabContact`.name, `tabContact`.full_name, `tabContact`.company_name
-		from
-			`tabContact`, `tabDynamic Link`
-		where
-			`tabDynamic Link`.parent = `tabContact`.name and
-			`tabDynamic Link`.parenttype = 'Contact' and
-			`tabDynamic Link`.link_doctype = %(link_doctype)s and
-			`tabDynamic Link`.link_name = %(link_name)s and
-			`tabContact`.`{searchfield}` like %(txt)s
-			{get_match_cond(doctype)}
-		order by
-			if(locate(%(_txt)s, `tabContact`.full_name), locate(%(_txt)s, `tabContact`.company_name), 99999),
-			`tabContact`.idx desc, `tabContact`.full_name
-		limit %(page_len)s offset %(start)s """,
-		{
-			"txt": "%" + txt + "%",
-			"_txt": txt.replace("%", ""),
-			"start": start,
-			"page_len": page_len,
-			"link_name": link_name,
-			"link_doctype": link_doctype,
-		},
+	Contact = frappe.qb.DocType("Contact")
+	DynamicLink = frappe.qb.DocType("Dynamic Link")
+
+	query = (
+		frappe.get_query(doctype, filters=filters, ignore_permissions=False)
+		.join(DynamicLink)
+		.on(DynamicLink.parent == Contact.name)
+		.select(Contact.name, Contact.full_name, Contact.company_name)
+		.where(DynamicLink.parenttype == "Contact")
+		.where(DynamicLink.link_doctype == link_doctype)
+		.where(DynamicLink.link_name == link_name)
+		.where(Contact[searchfield].like(f"%{txt}%"))
 	)
+
+	clean_txt = txt.replace("%", "")
+
+	locate_fullname = Locate(clean_txt, Contact.full_name)
+	locate_company = Locate(clean_txt, Contact.company_name)
+
+	order_case = (
+		Case()
+		.when(locate_fullname > 0, locate_fullname)
+		.when(locate_company > 0, locate_company)
+		.else_(99999)
+	)
+
+	query = query.orderby(order_case).orderby(Contact.idx, order=frappe.qb.desc).orderby(Contact.full_name)
+
+	query = query.limit(page_len).offset(start)
+
+	return query.run()
 
 
 @frappe.whitelist()
