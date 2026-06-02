@@ -429,11 +429,11 @@ def getseries(key, digits):
 	if current and current[0][0] is not None:
 		current = current[0][0]
 		# yes, update it
-		frappe.db.sql("UPDATE `tabSeries` SET `current` = `current` + 1 WHERE `name`=%s", (key,))
+		(frappe.qb.update(series).set(series.current, series.current + 1).where(series.name == key)).run()
 		current = cint(current) + 1
 	else:
 		# no, create it
-		frappe.db.sql("INSERT INTO `tabSeries` (`name`, `current`) VALUES (%s, 1)", (key,))
+		(frappe.qb.into(series).columns(series.name, series.current).insert(key, 1)).run()
 		current = 1
 	return ("%0" + str(digits) + "d") % current
 
