@@ -190,12 +190,14 @@ def update_user_settings(doctype, old_fieldname, new_fieldname):
 	# store the user settings data from the redis to db
 	sync_user_settings()
 
-	user_settings = frappe.db.sql(
-		""" select user, doctype, data from `__UserSettings`
-		where doctype=%s and data like %s""",
-		(doctype, f"%{old_fieldname}%"),
-		as_dict=1,
+	UserSettings = frappe.qb.DocType("__UserSettings")
+	query = (
+    frappe.qb.from_(UserSettings)
+    .select(UserSettings.user, UserSettings.doctype, UserSettings.data)
+    .where(UserSettings.doctype == doctype)
+    .where(UserSettings.data.like(f"%{old_fieldname}%"))
 	)
+	user_settings = query.run(as_dict=1)
 
 	for user_setting in user_settings:
 		update_user_settings_data(user_setting, "docfield", old_fieldname, new_fieldname)
