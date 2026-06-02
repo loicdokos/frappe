@@ -529,6 +529,8 @@ def validate_name(doctype: str, name: int | str):
 
 
 def append_number_if_name_exists(doctype, value, fieldname="name", separator="-", filters=None):
+	from frappe.query_builder.functions import Length
+
 	if not filters:
 		filters = dict()
 	filters.update({fieldname: value})
@@ -537,16 +539,18 @@ def append_number_if_name_exists(doctype, value, fieldname="name", separator="-"
 	regex = f"^{re.escape(value)}{separator}\\d+$"
 
 	if exists:
-		last = frappe.db.sql(
-			f"""SELECT `{fieldname}` FROM `tab{doctype}`
-			WHERE `{fieldname}` {frappe.db.REGEX_CHARACTER} %s
-			ORDER BY length({fieldname}) DESC,
-			`{fieldname}` DESC LIMIT 1""",
-			regex,
-		)
+		T = frappe.qb.DocType(doctype)
+		last = (
+			frappe.qb.from_(T)
+			.select(T[fieldname])
+			.where(T[fieldname].regexp(regex))
+			.orderby(Length(T[fieldname]), order=frappe.qb.desc)
+			.orderby(T[fieldname], order=frappe.qb.desc)
+			.limit(1)
+		).run(as_dict=True)
 
 		if last:
-			count = str(cint(last[0][0].rsplit(separator, 1)[1]) + 1)
+			count = str(cint(last[0][fieldname].rsplit(separator, 1)[1]) + 1)
 		else:
 			count = "1"
 
