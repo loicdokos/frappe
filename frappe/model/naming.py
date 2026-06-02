@@ -483,7 +483,8 @@ def revert_series_if_last(key, name, doc=None):
 	current = (frappe.qb.from_(series).where(series.name == prefix).for_update().select("current")).run()
 
 	if current and current[0][0] == count:
-		frappe.db.sql("UPDATE `tabSeries` SET `current` = `current` - 1 WHERE `name`=%s", prefix)
+		series = frappe.qb.DocType("Series")
+		(frappe.qb.update(series).set(series.current, series.current - 1).where(series.name == prefix)).run()
 
 
 def get_default_naming_series(doctype: str) -> str | None:
