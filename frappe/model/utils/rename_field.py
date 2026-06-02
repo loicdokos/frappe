@@ -142,10 +142,13 @@ def update_reports(doctype, old_fieldname, new_fieldname):
 
 
 def update_users_report_view_settings(doctype, ref_fieldname, new_fieldname):
-	user_report_cols = frappe.db.sql(
-		"""select defkey, defvalue from `tabDefaultValue` where
-		defkey like '_list_settings:%'"""
+	DefaultValue = frappe.qb.DocType("DefaultValue")
+	query = (
+    frappe.qb.from_(DefaultValue)
+    .select(DefaultValue.defkey, DefaultValue.defvalue)
+    .where(DefaultValue.defkey.like("_list_settings:%"))
 	)
+	user_report_cols = query.run()
 	for key, value in user_report_cols:
 		new_columns = []
 		columns_modified = False
@@ -157,11 +160,12 @@ def update_users_report_view_settings(doctype, ref_fieldname, new_fieldname):
 				new_columns.append([field, field_doctype])
 
 		if columns_modified:
-			frappe.db.sql(
-				"""update `tabDefaultValue` set defvalue={}
-				where defkey={}""".format("%s", "%s"),
-				(json.dumps(new_columns), key),
-			)
+			DefaultValue = frappe.qb.DocType("DefaultValue")
+			(
+				frappe.qb.update(DefaultValue)
+				.set(DefaultValue.defvalue, json.dumps(new_columns))
+				.where(DefaultValue.defkey == key)
+			).run()
 
 
 def update_property_setters(doctype, old_fieldname, new_fieldname):
