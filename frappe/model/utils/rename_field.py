@@ -67,6 +67,7 @@ def rename_field(doctype, old_fieldname, new_fieldname, validate=True):
 
 
 def update_reports(doctype, old_fieldname, new_fieldname):
+	from frappe.query_builder.functions import IfNull
 	def _get_new_sort_by(report_dict, report, key):
 		sort_by = report_dict.get(key) or ""
 		if sort_by:
@@ -84,14 +85,16 @@ def update_reports(doctype, old_fieldname, new_fieldname):
 
 		return sort_by
 
-	reports = frappe.db.sql(
-		"""select name, ref_doctype, json from tabReport
-		where report_type = 'Report Builder' and ifnull(is_standard, 'No') = 'No'
-		and json like %s and json like %s""",
-		("%{}%".format(old_fieldname), "%{}%".format(doctype)),
-		as_dict=True,
+	Report = frappe.qb.DocType("Report")
+	query = (
+    frappe.qb.from_(Report)
+    .select(Report.name, Report.ref_doctype, Report.json)
+    .where(Report.report_type == "Report Builder")
+    .where(IfNull(Report.is_standard, "No") == "No")
+    .where(Report.json.like(f"%{old_fieldname}%"))
+    .where(Report.json.like(f"%{doctype}%"))
 	)
-
+	reports = query.run(as_dict=True)
 	for r in reports:
 		report_dict = json.loads(r.json)
 
@@ -130,8 +133,12 @@ def update_reports(doctype, old_fieldname, new_fieldname):
 					"sort_order_next": report_dict.get("sort_order_next"),
 				}
 			)
-
-			frappe.db.sql("""update `tabReport` set `json`=%s where name=%s""", (new_val, r.name))
+			Report = frappe.qb.DocType("Report")
+			(
+				frappe.qb.update(Report)
+				.set(Report.json, new_val)
+				.where(Report.name == r.name)
+			).run()
 
 
 def update_users_report_view_settings(doctype, ref_fieldname, new_fieldname):
