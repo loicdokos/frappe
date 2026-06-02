@@ -26,22 +26,32 @@ def rename_field(doctype, old_fieldname, new_fieldname, validate=True):
 
 	if new_field.fieldtype in table_fields:
 		# change parentfield of table mentioned in options
-		frappe.db.sql(
-			"""update `tab{}` set parentfield={}
-			where parentfield={}""".format(new_field.options.split("\n", 1)[0], "%s", "%s"),
-			(new_fieldname, old_fieldname),
-		)
+		target_doctype_name = new_field.options.split("\n", 1)[0]
+		TargetDocType = frappe.qb.DocType(target_doctype_name)
+		(
+			frappe.qb.update(TargetDocType)
+			.set(TargetDocType.parentfield, new_fieldname)
+			.where(TargetDocType.parentfield == old_fieldname)
+		).run()
 
 	elif new_field.fieldtype not in no_value_fields:
 		if meta.issingle:
-			frappe.db.sql(
-				"""update `tabSingles` set field=%s
-				where doctype=%s and field=%s""",
-				(new_fieldname, doctype, old_fieldname),
-			)
+			Singles = frappe.qb.DocType("Singles")
+			(
+				frappe.qb.update(Singles)
+				.set(Singles.field, new_fieldname)
+				.where(Singles.doctype == doctype)
+				.where(Singles.field == old_fieldname)
+			).run()
 		else:
 			# copy field value
-			frappe.db.sql(f"""update `tab{doctype}` set `{new_fieldname}`=`{old_fieldname}`""")
+			TargetDocType = frappe.qb.DocType(doctype)
+			new_field = getattr(TargetDocType, new_fieldname)
+			old_field = getattr(TargetDocType, old_fieldname)
+			(
+				frappe.qb.update(TargetDocType)
+				.set(new_field, old_field)
+			).run()
 
 		update_reports(doctype, old_fieldname, new_fieldname)
 		update_users_report_view_settings(doctype, old_fieldname, new_fieldname)
