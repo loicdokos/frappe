@@ -169,17 +169,21 @@ def update_users_report_view_settings(doctype, ref_fieldname, new_fieldname):
 
 
 def update_property_setters(doctype, old_fieldname, new_fieldname):
-	frappe.db.sql(
-		"""update `tabProperty Setter` set field_name = %s
-		where doc_type=%s and field_name=%s""",
-		(new_fieldname, doctype, old_fieldname),
-	)
+	PropertySetter = frappe.qb.DocType("Property Setter")
+	(
+        frappe.qb.update(PropertySetter)
+        .set(PropertySetter.field_name, new_fieldname)
+        .where(PropertySetter.doc_type == doctype)
+        .where(PropertySetter.field_name == old_fieldname)
+    ).run()
 
-	frappe.db.sql(
-		"""update `tabCustom Field` set insert_after=%s
-		where insert_after=%s and dt=%s""",
-		(new_fieldname, old_fieldname, doctype),
-	)
+	CustomField = frappe.qb.DocType("Custom Field")
+	(
+        frappe.qb.update(CustomField)
+        .set(CustomField.insert_after, new_fieldname)
+        .where(CustomField.insert_after == old_fieldname)
+        .where(CustomField.dt == doctype)
+    ).run()
 
 
 def update_user_settings(doctype, old_fieldname, new_fieldname):
