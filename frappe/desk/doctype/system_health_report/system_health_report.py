@@ -304,14 +304,29 @@ class SystemHealthReport(Document):
 		for row in data[:5]:
 			self.append("top_db_tables", row)
 
+		from pypika import Schema
+
+		from frappe.query_builder.functions import CustomFunction
+
 		if frappe.db.db_type == "sqlite":
-			self.database_version = frappe.db.sql("select sqlite_version()")[0][0]
+			SqliteVersion = CustomFunction("sqlite_version", [])
+			self.database_version = frappe.qb.select(SqliteVersion()).run()[0][0]
 		else:
-			self.database_version = frappe.db.sql("select version()")[0][0]
+			Version = CustomFunction("version", [])
+			self.database_version = frappe.qb.select(Version()).run()[0][0]
 
 		if frappe.db.db_type == "mariadb":
-			self.bufferpool_size = frappe.db.sql("show variables like 'innodb_buffer_pool_size'")[0][1]
-			self.binary_logging = frappe.db.sql("show variables like 'log_bin'")[0][1]
+			GlobalVars = Schema("information_schema").GLOBAL_VARIABLES
+			self.bufferpool_size = (
+				frappe.qb.from_(GlobalVars)
+				.select(GlobalVars.variable_value)
+				.where(GlobalVars.variable_name == "innodb_buffer_pool_size")
+			).run()[0][0]
+			self.binary_logging = (
+				frappe.qb.from_(GlobalVars)
+				.select(GlobalVars.variable_value)
+				.where(GlobalVars.variable_name == "log_bin")
+			).run()[0][0]
 
 	@health_check("Cache")
 	def fetch_cache_details(self):
