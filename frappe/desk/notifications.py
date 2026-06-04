@@ -185,7 +185,14 @@ def get_notification_info():
 	can_read = frappe.get_user().get_can_read()
 	conditions = {}
 	module_doctypes = {}
-	doctype_info = dict(frappe.db.sql("""select name, module from tabDocType"""))
+	DocType = frappe.qb.DocType("DocType")
+
+	query = (
+		frappe.qb.from_(DocType)
+		.select(DocType.name, DocType.module)
+	)
+
+	doctype_info = dict(query.run())
 
 	for d in list(set(can_read + list(config.for_doctype))):
 		if d in config.for_doctype:
