@@ -13,7 +13,6 @@ from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.desk.doctype.notification_settings.notification_settings import (
 	is_email_notifications_enabled_for_type,
 )
-from frappe.desk.reportview import get_filters_cond
 from frappe.model.document import Document
 from frappe.model.utils.user_settings import get_user_settings, sync_user_settings, update_user_settings
 from frappe.utils import (
@@ -357,75 +356,63 @@ def get_events(
 	if isinstance(filters, str):
 		filters = json.loads(filters)
 
-	filter_condition = get_filters_cond("Event", filters, [])
+	from pypika import CustomFunction
+	from pypika.terms import ExistsCriterion
 
-	tables = ["`tabEvent`"]
-	if "`tabEvent Participants`" in filter_condition:
-		tables.append("`tabEvent Participants`")
+	from frappe.query_builder.functions import Coalesce
 
-	event_candidates: list[EventLikeDict] = frappe.db.sql(
-		"""
-		SELECT `tabEvent`.name,
-				`tabEvent`.subject,
-				`tabEvent`.description,
-				`tabEvent`.color,
-				`tabEvent`.starts_on,
-				`tabEvent`.ends_on,
-				`tabEvent`.owner,
-				`tabEvent`.all_day,
-				`tabEvent`.event_type,
-				`tabEvent`.repeat_this_event,
-				`tabEvent`.repeat_on,
-				`tabEvent`.repeat_till,
-				`tabEvent`.monday,
-				`tabEvent`.tuesday,
-				`tabEvent`.wednesday,
-				`tabEvent`.thursday,
-				`tabEvent`.friday,
-				`tabEvent`.saturday,
-				`tabEvent`.sunday
-		FROM {tables}
-		WHERE (
-				(
-					(date(`tabEvent`.starts_on) BETWEEN date(%(start)s) AND date(%(end)s))
-					OR (date(`tabEvent`.ends_on) BETWEEN date(%(start)s) AND date(%(end)s))
-					OR (
-						date(`tabEvent`.starts_on) <= date(%(start)s)
-						AND date(`tabEvent`.ends_on) >= date(%(end)s)
-					)
-				)
-				OR (
-					date(`tabEvent`.starts_on) <= date(%(start)s)
-					AND `tabEvent`.repeat_this_event=1
-					AND coalesce(`tabEvent`.repeat_till, '3000-01-01') > date(%(start)s)
-				)
-			)
-		{reminder_condition}
-		{filter_condition}
-		AND (
-				`tabEvent`.event_type='Public'
-				OR `tabEvent`.owner=%(user)s
-				OR EXISTS(
-					SELECT `tabDocShare`.name
-					FROM `tabDocShare`
-					WHERE `tabDocShare`.share_doctype='Event'
-						AND `tabDocShare`.share_name=`tabEvent`.name
-						AND `tabDocShare`.user=%(user)s
-				)
-			)
-		AND `tabEvent`.status='Open'
-		ORDER BY `tabEvent`.starts_on""".format(
-			tables=", ".join(tables),
-			filter_condition=filter_condition,
-			reminder_condition="AND `tabEvent`.send_reminder = 1" if for_reminder else "",
-		),
-		{
-			"start": start,
-			"end": end,
-			"user": target_user,
-		},
-		as_dict=True,
+	EventT = frappe.qb.DocType("Event")
+	DocShare = frappe.qb.DocType("DocShare")
+	Date = CustomFunction("DATE", ["term"])
+
+	date_range = (
+		Date(EventT.starts_on).between(Date(start), Date(end))
+		| Date(EventT.ends_on).between(Date(start), Date(end))
+		| ((Date(EventT.starts_on) <= Date(start)) & (Date(EventT.ends_on) >= Date(end)))
 	)
+
+	recurring = (
+		(Date(EventT.starts_on) <= Date(start))
+		& (EventT.repeat_this_event == 1)
+		& (Coalesce(EventT.repeat_till, "3000-01-01") > Date(start))
+	)
+
+	docshare_sub = (
+		frappe.qb.from_(DocShare)
+		.select(DocShare.name)
+		.where(DocShare.share_doctype == "Event")
+		.where(DocShare.share_name == EventT.name)
+		.where(DocShare.user == target_user)
+	)
+
+	visibility = (
+		(EventT.event_type == "Public")
+		| (EventT.owner == target_user)
+		| ExistsCriterion(docshare_sub)
+	)
+
+	query = (
+		frappe.get_query(
+			"Event",
+			fields=[
+				"name", "subject", "description", "color", "starts_on", "ends_on",
+				"owner", "all_day", "event_type", "repeat_this_event", "repeat_on",
+				"repeat_till", "monday", "tuesday", "wednesday", "thursday",
+				"friday", "saturday", "sunday",
+			],
+			filters=filters,
+			ignore_permissions=True,
+		)
+		.where(date_range | recurring)
+		.where(visibility)
+		.where(EventT.status == "Open")
+		.orderby(EventT.starts_on)
+	)
+
+	if for_reminder:
+		query = query.where(EventT.send_reminder == 1)
+
+	event_candidates: list[EventLikeDict] = query.run(as_dict=True)
 
 	def resolve_event(e: EventLikeDict, target_date: "date", repeat_till: "date"):
 		"""Record the event if it falls within the date range and is not excluded by the weekday."""
