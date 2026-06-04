@@ -197,12 +197,19 @@ class FormMeta(Meta):
 		frappe.throw(msg, title=_("Missing DocType"))
 
 	def load_print_formats(self):
-		print_formats = frappe.db.sql(
-			"""select * FROM `tabPrint Format`
-			WHERE doc_type=%s AND docstatus<2 and disabled=0""",
-			(self.name,),
-			as_dict=1,
-			update={"doctype": "Print Format"},
+		PrintFormat = frappe.qb.DocType("Print Format")
+
+		query = (
+			frappe.qb.from_(PrintFormat)
+			.select("*")
+			.where(PrintFormat.doc_type == self.name)
+			.where(PrintFormat.docstatus < 2)
+			.where(PrintFormat.disabled == 0)
+		)
+
+		print_formats = query.run(
+			as_dict=1, 
+			update={"doctype": "Print Format"}
 		)
 
 		self.set("__print_formats", print_formats)
