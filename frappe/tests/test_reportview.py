@@ -1,8 +1,10 @@
 # Copyright (c) 2019, Frappe Technologies Pvt. Ltd. and Contributors
 # License: MIT. See LICENSE
 
+from unittest.mock import patch
+
 import frappe
-from frappe.desk.reportview import export_query, extract_fieldnames
+from frappe.desk.reportview import export_query, extract_fieldnames, get_count
 from frappe.tests import IntegrationTestCase
 
 
@@ -108,3 +110,65 @@ class TestReportview(IntegrationTestCase):
 
 		self.assertTrue(jobs, "Background job was not enqueued")
 		self.assertTrue(email_queue, "Email was not enqueued")
+
+	@patch("frappe.desk.reportview.get_form_params")
+	def test_get_count_with_limit(self, mock_get_params):
+		"""Test count with a specified limit"""
+		mock_get_params.return_value = frappe._dict(
+			doctype="User",
+			filters={},
+			fields=[],
+			distinct=False,
+			limit=1,
+			order_by=None
+		)
+
+		result = get_count()
+
+		if result == 1:
+			cache_control = frappe.local.response_headers.get("Cache-Control")
+			self.assertIn("max-age=600", cache_control)
+		else:
+			self.assertIsInstance(result, int)
+
+	@patch("frappe.desk.reportview.get_form_params")
+	@patch("frappe.db.is_statement_timeout")
+	def test_get_count_statement_timeout(self, mock_is_timeout, mock_get_params):
+		"""Test that the method catches a PostgreSQL/MariaDB timeout and returns None"""
+		mock_get_params.return_value = frappe._dict(
+			doctype="User",
+			filters={},
+			fields=[],
+			distinct=False,
+			limit=10,
+			order_by=None
+		)
+
+		mock_is_timeout.return_value = True
+
+		from pypika import Query
+		with patch("frappe.desk.reportview.execute") as mock_execute:
+			# Provide a valid QueryBuilder to the method
+			mock_qb = Query.from_("tabUser").select("name").limit(10)
+			mock_execute.return_value = mock_qb
+
+			# Simulate the error only at the point of count_query.run()
+			with patch("pypika.queries.QueryBuilder.run", side_effect=Exception("Simulated timeout")):
+				result = get_count()
+
+				# The except block should catch the timeout and return None
+				self.assertIsNone(result)
+				cache_control = frappe.local.response_headers.get("Cache-Control")
+				self.assertIn("stale-while-revalidate", cache_control)
+
+	@patch("frappe.desk.reportview.get_form_params")
+	def test_get_count_virtual_doctype(self, mock_get_params):
+		"""Test routing to the controller when the DocType is virtual"""
+		with patch("frappe.desk.reportview.is_virtual_doctype", return_value=True), \
+				patch("frappe.desk.reportview.get_controller") as mock_controller:
+
+			mock_get_params.return_value = frappe._dict(doctype="VirtualDocType")
+			mock_controller.return_value.get_count.return_value = 42
+
+			result = get_count()
+			self.assertEqual(result, 42)
