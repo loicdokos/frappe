@@ -276,16 +276,19 @@ class SystemHealthReport(Document):
 		filters = {"creation": (">", threshold), "modified": (">", threshold)}
 		self.total_errors = frappe.db.count("Error Log", filters)
 
-		top_errors = frappe.db.sql(
-			"""select method as title, count(*) as occurrences
-			from `tabError Log`
-			where modified > %(threshold)s and creation > %(threshold)s
-			group by method
-			order by occurrences desc
-			limit 5""",
-			{"threshold": threshold},
-			as_dict=True,
-		)
+		from frappe.query_builder import DocType, Order
+		from frappe.query_builder.functions import Count
+
+		ErrorLog = DocType("Error Log")
+		top_errors = (
+			frappe.qb.from_(ErrorLog)
+			.select(ErrorLog.method.as_("title"), Count("*").as_("occurrences"))
+			.where(ErrorLog.modified > threshold)
+			.where(ErrorLog.creation > threshold)
+			.groupby(ErrorLog.method)
+			.orderby(Count("*"), order=Order.desc)
+			.limit(5)
+		).run(as_dict=True)
 		for row in top_errors:
 			self.append("top_errors", row)
 
